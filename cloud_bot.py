@@ -19,7 +19,8 @@ ASSETS = [
     {"name": "EUR/USD", "ticker": "EURUSD=X"}
 ]
 
-TIMEFRAMES = ["1m", "5m", "15m"]
+# Only 5-Min and 15-Min (1-Min removed for stable trades)
+TIMEFRAMES = ["5m", "15m"]
 
 FIB_RATIO = 0.146
 T1_RR = 1.5
@@ -45,7 +46,7 @@ def send_alert(message):
 
 def get_market_data(ticker, tf):
     try:
-        period = "1d" if tf in ["1m", "5m"] else "5d"
+        period = "5d"
         df = yf.download(ticker, period=period, interval=tf, progress=False)
         if df is None or df.empty or len(df) < 20:
             return None
@@ -114,8 +115,8 @@ def analyze_market(df):
 
 def trading_bot_loop():
     time.sleep(3)
-    print("Bot Scanning Started...")
-    send_alert("⚡ *Glitching Trading Engine Live*\nScanning 1m, 5m, 15m with Reversal Chances")
+    print("Bot Scanning Started (5m & 15m)...")
+    send_alert("⚡ *Trading Bot Active*\nScanning: 5-Min & 15-Min with Reversal Chances")
     last_signals = {}
 
     while True:
@@ -146,10 +147,11 @@ def trading_bot_loop():
                     now_ts = time.time()
                     last_ts = last_signals.get(sig_key, 0)
 
-                    cooldown = 180 if tf == "1m" else (480 if tf == "5m" else 1200)
+                    # Cooldown: 5m = 10 minutes (600s), 15m = 25 minutes (1500s)
+                    cooldown = 600 if tf == "5m" else 1500
 
                     if now_ts - last_ts > cooldown:
-                        tf_name = "1-Min" if tf == "1m" else ("5-Min" if tf == "5m" else "15-Min")
+                        tf_name = "5-Min" if tf == "5m" else "15-Min"
 
                         # BUY Alert
                         if is_uptrend and live_price >= fib_level and buyer_score >= 55:
@@ -199,7 +201,7 @@ def trading_bot_loop():
 
                     time.sleep(1)
 
-            time.sleep(15)
+            time.sleep(20)
         except Exception as e:
             print(f"Loop error: {e}")
             time.sleep(10)
