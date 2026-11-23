@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import pytz
-from flask import Flask
+from flask import Flask, request
 
 # ==============================================================================
 # 1. TELEGRAM & RENDER CONFIGURATION
@@ -26,23 +26,34 @@ SYMBOLS = {
     "RELIANCE (NSE)": "RELIANCE.NS"
 }
 
-# Prop Firm Risk Settings ($1,000 Instant Funded Account)
 INITIAL_CAPITAL = 1000.0
 RISK_PER_TRADE  = 0.005  # 0.5% ($5 per trade)
-MAX_DAILY_LOSS  = 2      # Max 2 SL per day (-1.0% cap to protect 3% Daily DD)
+MAX_DAILY_LOSS  = 2      # Max 2 SL per day
 
-active_trades = {}      # {market_name: {strategy, dir, entry, sl, tp, rr, time}}
-last_signal_candle = {} # Prevent duplicate alerts on same candle
-daily_sl_count = {}     # {date_str: count}
+active_trades = {}
+last_signal_candle = {}
+daily_sl_count = {}
 
 # ==============================================================================
-# 2. RENDER KEEP-ALIVE WEB SERVER (Prevents Port Bind Timeout on Render)
+# 2. RENDER WEB SERVER + 0-SECOND TRADINGVIEW WEBHOOK RECEIVER
 # ==============================================================================
 app = Flask(__name__)
 
-@app.route("/")
+@app.route("/", methods=["GET"])
 def health_check():
-    return f"🎯 4-in-1 Ultra-Sniper Bot Running | Active Trades: {len(active_trades)}", 200
+    return f"🎯 0-Sec Live Ultra-Sniper Bot Running | Active Trades: {len(active_trades)}", 200
+
+@app.route("/webhook", methods=["POST"])
+def tradingview_webhook():
+    data = request.get_data(as_text=True)
+    now_str = datetime.now(IST).strftime("%I:%M:%S %p")
+    send_telegram(
+        f"⚡ <b>0-SEC LIVE TRADINGVIEW ALERT!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"{data}\n"
+        f"⏰ <b>IST Time:</b> {now_str}"
+    )
+    return "OK", 200
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -60,7 +71,7 @@ def send_telegram(msg):
         print(f"Telegram Error: {e}")
 
 # ==============================================================================
-# 4. INDICATORS & 4-IN-1 ULTRA-SNIPER SIGNAL ENGINE (46%+ WR)
+# 4. INDICATORS & 4-IN-1 ULTRA-SNIPER SIGNAL ENGINE
 # ==============================================================================
 def prepare_data(ticker):
     df = yf.download(ticker, period="10d", interval="15m", progress=False)
@@ -70,17 +81,14 @@ def prepare_data(ticker):
         df.columns = df.columns.get_level_values(0)
     df.index = df.index.tz_convert(IST) if df.index.tz is not None else df.index.tz_localize("UTC").tz_convert(IST)
 
-    # EMAs
     for p in [9, 15, 50, 200]:
         df[f"EMA_{p}"] = df["Close"].ewm(span=p, adjust=False).mean()
 
-    # RSI (7)
     delta = df["Close"].diff()
     gain  = delta.clip(lower=0).ewm(alpha=1/7, adjust=False).mean()
     loss  = (-delta.clip(upper=0)).ewm(alpha=1/7, adjust=False).mean()
     df["RSI_7"] = 100 - (100 / (1 + (gain / loss.replace(0, np.nan))))
 
-    # ATR & ADX (14)
     tr = np.maximum(df["High"] - df["Low"], np.maximum(abs(df["High"] - df["Close"].shift(1)), abs(df["Low"] - df["Close"].shift(1))))
     df["ATR"] = tr.rolling(14).mean()
     up_m = df["High"] - df["High"].shift(1)
@@ -92,25 +100,19 @@ def prepare_data(ticker):
     dx   = 100 * abs(p_di - m_di) / (p_di + m_di).replace(0, np.nan)
     df["ADX"] = dx.ewm(alpha=1/14, adjust=False).mean()
 
-    # Bollinger Bands (30)
     df["BB30_Mid"] = df["Close"].rolling(30).mean()
     df["BB30_Std"] = df["Close"].rolling(30).std()
     df["BB30_Up"]  = df["BB30_Mid"] + 2 * df["BB30_Std"]
     df["BB30_Lo"]  = df["BB30_Mid"] - 2 * df["BB30_Std"]
     df["BB30_W"]   = (df["BB30_Up"] - df["BB30_Lo"]) / df["BB30_Mid"]
 
-    # 30-Bar Swing High/Low
     df["Swing_High"] = df["High"].rolling(30).max().shift(1)
     df["Swing_Low"]  = df["Low"].rolling(30).min().shift(1)
     return df.dropna()
 
 def evaluate_sniper_setup(df):
-    r  = df.iloc[-2]
-    p1 = df.iloc[-3]
-    p2 = df.iloc[-4]
-    p3 = df.iloc[-5]
+    r, p1, p2, p3 = df.iloc[-2], df.iloc[-3], df.iloc[-4], df.iloc[-5]
     c_time = str(df.index[-2])
-
     atr = r["ATR"]
     if atr <= 0 or np.isnan(atr):
         return None
@@ -164,14 +166,13 @@ def evaluate_sniper_setup(df):
     return None
 
 # ==============================================================================
-# 5. 24/7 LIVE SCANNER & TARGET/SL HIT MONITOR LOOP
+# 5. FAST 15-SEC LIVE SCANNER & TARGET/SL HIT MONITOR
 # ==============================================================================
 def scanner_loop():
     send_telegram(
-        "🚀 <b>4-in-1 Ultra-Sniper Bot Started on Render!</b>\n"
-        "• Strategies: 0.786 Fib, Golden 3-Candle, BB(30), 05:30 IST\n"
-        "• Prop Shield: 0.5% Risk/Trade | Max 2 SL/Day\n"
-        "• Status: Scanning 7 Markets 24/7..."
+        "🚀 <b>0-Sec Webhook + Fast Sniper Bot Live!</b>\n"
+        "• Mode: TradingView Webhook Ready + 15-Sec Scanner\n"
+        "• Prop Shield: 0.5% Risk/Trade | Max 2 SL/Day"
     )
 
     while True:
@@ -187,7 +188,6 @@ def scanner_loop():
                 curr_high = float(df.iloc[-1]["High"])
                 curr_low  = float(df.iloc[-1]["Low"])
 
-                # --- A. CHECK IF ACTIVE TRADE HIT TARGET OR STOP LOSS ---
                 if m_name in active_trades:
                     tr = active_trades[m_name]
                     dec = 2 if "GOLD" in m_name or "BTC" in m_name or "RELIANCE" in m_name else (3 if "JPY" in m_name else 5)
@@ -199,8 +199,7 @@ def scanner_loop():
                                 f"✅ <b>TARGET HIT SAFELY! (+{tr['rr']}R | +${profit_usd})</b>\n"
                                 f"📌 <b>Pair:</b> {m_name}\n"
                                 f"🧠 <b>Strategy:</b> {tr['strategy']}\n"
-                                f"🎯 <b>Target Price:</b> {round(tr['tp'], dec)}\n"
-                                f"💰 <b>Status:</b> Trade Closed in Profit!"
+                                f"🎯 <b>Target Price:</b> {round(tr['tp'], dec)}"
                             )
                             del active_trades[m_name]
                         elif curr_low <= tr["sl"]:
@@ -209,8 +208,7 @@ def scanner_loop():
                             send_telegram(
                                 f"🛑 <b>STOP LOSS HIT (-1.0R | -${loss_usd})</b>\n"
                                 f"📌 <b>Pair:</b> {m_name}\n"
-                                f"🧠 <b>Strategy:</b> {tr['strategy']}\n"
-                                f"🛡️ <b>Daily SL Count:</b> {daily_sl_count[today_str]}/{MAX_DAILY_LOSS}"
+                                f"🛡️ <b>Daily SL:</b> {daily_sl_count[today_str]}/{MAX_DAILY_LOSS}"
                             )
                             del active_trades[m_name]
 
@@ -221,8 +219,7 @@ def scanner_loop():
                                 f"✅ <b>TARGET HIT SAFELY! (+{tr['rr']}R | +${profit_usd})</b>\n"
                                 f"📌 <b>Pair:</b> {m_name}\n"
                                 f"🧠 <b>Strategy:</b> {tr['strategy']}\n"
-                                f"🎯 <b>Target Price:</b> {round(tr['tp'], dec)}\n"
-                                f"💰 <b>Status:</b> Trade Closed in Profit!"
+                                f"🎯 <b>Target Price:</b> {round(tr['tp'], dec)}"
                             )
                             del active_trades[m_name]
                         elif curr_high >= tr["sl"]:
@@ -231,12 +228,10 @@ def scanner_loop():
                             send_telegram(
                                 f"🛑 <b>STOP LOSS HIT (-1.0R | -${loss_usd})</b>\n"
                                 f"📌 <b>Pair:</b> {m_name}\n"
-                                f"🧠 <b>Strategy:</b> {tr['strategy']}\n"
-                                f"🛡️ <b>Daily SL Count:</b> {daily_sl_count[today_str]}/{MAX_DAILY_LOSS}"
+                                f"🛡️ <b>Daily SL:</b> {daily_sl_count[today_str]}/{MAX_DAILY_LOSS}"
                             )
                             del active_trades[m_name]
 
-                # --- B. SCAN FOR NEW HIGH-ACCURACY SNIPER SIGNAL ---
                 if m_name not in active_trades:
                     if daily_sl_count.get(today_str, 0) >= MAX_DAILY_LOSS:
                         continue
@@ -253,21 +248,18 @@ def scanner_loop():
                             f"{emoji} <b>NEW SNIPER TRADE ACTIVE!</b>\n"
                             f"━━━━━━━━━━━━━━━━━━━━\n"
                             f"📊 <b>Market:</b> {m_name} (15m)\n"
-                            f"🧠 <b>Active Strategy:</b> {sig['strategy']}\n"
-                            f"🏆 <b>Backtest Win Rate:</b> {sig['wr']} (RR 1:{sig['rr']})\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"🧠 <b>Strategy:</b> {sig['strategy']} (WR: {sig['wr']})\n"
                             f"⚡ <b>Action:</b> {sig['dir']} NOW\n"
                             f"🚪 <b>Entry:</b> <code>{round(sig['entry'], dec)}</code>\n"
                             f"🛑 <b>Stop Loss:</b> <code>{round(sig['sl'], dec)}</code>\n"
                             f"🎯 <b>Target TP:</b> <code>{round(sig['tp'], dec)}</code>\n"
-                            f"💼 <b>Prop Risk:</b> 0.5% ($5.00)\n"
                             f"⏰ <b>IST Time:</b> {now_ist.strftime('%I:%M %p')}"
                         )
 
             except Exception as e:
                 print(f"Error scanning {m_name}: {e}")
 
-        time.sleep(60)
+        time.sleep(15) # Fast 15-second scan loop
 
 if __name__ == "__main__":
     threading.Thread(target=run_web, daemon=True).start()
